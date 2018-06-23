@@ -3077,7 +3077,7 @@ def save(operator, context,
     if batch_mode == 'OFF':
         kwargs_mod = kwargs.copy()
         if use_selection:
-            kwargs_mod["context_objects"] = context.selected_objects
+            kwargs_mod["context_objects"] = sorted(context.selected_objects, key = lambda obj: obj.name)
         else:
             kwargs_mod["context_objects"] = context.scene.objects
 
