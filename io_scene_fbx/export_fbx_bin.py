@@ -553,13 +553,14 @@ def fbx_data_element_custom_properties(props, bid):
 
 def fbx_data_empty_elements(root, empty, scene_data):
     """
-    Write the Empty data block.
+    Write the Empty data block (you can control its FBX datatype with the 'fbx_type' string custom property).
     """
     empty_key = scene_data.data_empties[empty]
 
     null = elem_data_single_int64(root, b"NodeAttribute", get_fbx_uuid_from_key(empty_key))
     null.add_string(fbx_name_class(empty.name.encode(), b"NodeAttribute"))
-    null.add_string(b"Null")
+    val = empty.bdata.get('fbx_type', None)
+    null.add_string(val.encode() if val and isinstance(val, str) else b"Null")
 
     elem_data_single_string(null, b"TypeFlags", b"Null")
 
@@ -2019,6 +2020,7 @@ def fbx_animations(scene_data):
             add_anim(animations, animated,
                      fbx_animations_do(scene_data, strip, strip.frame_start, strip.frame_end, True, force_keep=True))
             strip.mute = True
+            scene.frame_set(scene.frame_current, 0.0)
 
         for strip in strips:
             strip.mute = False
@@ -2097,6 +2099,7 @@ def fbx_animations(scene_data):
                         pbo.matrix_basis = mat.copy()
                 ob.animation_data.action = org_act
                 restore_object(ob, ob_copy)
+                scene.frame_set(scene.frame_current, 0.0)
 
             if pbones_matrices is not ...:
                 for pbo, mat in zip(ob.pose.bones, pbones_matrices):
@@ -2104,6 +2107,7 @@ def fbx_animations(scene_data):
             ob.animation_data.action = org_act
 
             bpy.data.objects.remove(ob_copy)
+            scene.frame_set(scene.frame_current, 0.0)
 
     # Global (containing everything) animstack, only if not exporting NLA strips and/or all actions.
     if not scene_data.settings.bake_anim_use_nla_strips and not scene_data.settings.bake_anim_use_all_actions:
@@ -2172,12 +2176,14 @@ def fbx_data_from_scene(scene, settings):
                 data_meshes[ob_obj] = data_meshes[org_ob_obj]
                 continue
 
-        if settings.use_mesh_modifiers or ob.type in BLENDER_OTHER_OBJECT_TYPES:
-            use_org_data = False
+        is_ob_material = any(ms.link == 'OBJECT' for ms in ob.material_slots)
+
+        if settings.use_mesh_modifiers or ob.type in BLENDER_OTHER_OBJECT_TYPES or is_ob_material:
+            # We cannot use default mesh in that case, or material would not be the right ones...
+            use_org_data = not (is_ob_material or ob.type in BLENDER_OTHER_OBJECT_TYPES)
             tmp_mods = []
-            if ob.type == 'MESH':
+            if use_org_data and ob.type == 'MESH':
                 # No need to create a new mesh in this case, if no modifier is active!
-                use_org_data = True
                 for mod in ob.modifiers:
                     # For meshes, when armature export is enabled, disable Armature modifiers here!
                     if mod.type == 'ARMATURE' and 'ARMATURE' in settings.object_types:
@@ -2186,7 +2192,8 @@ def fbx_data_from_scene(scene, settings):
                     if mod.show_render:
                         use_org_data = False
             if not use_org_data:
-                tmp_me = ob.to_mesh(scene, apply_modifiers=True, settings='RENDER')
+                tmp_me = ob.to_mesh(scene, apply_modifiers=True,
+                                    settings='RENDER' if settings.use_mesh_modifiers_render else 'PREVIEW')
                 data_meshes[ob_obj] = (get_blenderID_key(tmp_me), tmp_me, True)
             # Re-enable temporary disabled modifiers.
             for mod, show_render in tmp_mods:
@@ -2667,13 +2674,16 @@ def fbx_header_elements(root, scene_data, time=None):
 
     props = elem_properties(global_settings)
     up_axis, front_axis, coord_axis = RIGHT_HAND_AXES[scene_data.settings.to_axes]
-    if scene_data.settings.apply_unit_scale:
-        # Unit scaling is applied to objects' scale, so our unit is effectively FBX one (centimeter).
-        scale_factor_org = 1.0
-        scale_factor = scene_data.settings.global_scale / units_blender_to_fbx_factor(scene)
-    else:
-        scale_factor_org = units_blender_to_fbx_factor(scene)
-        scale_factor = scene_data.settings.global_scale * units_blender_to_fbx_factor(scene)
+    #~ # DO NOT take into account global scale here! That setting is applied to object transformations during export
+    #~ # (in other words, this is pure blender-exporter feature, and has nothing to do with FBX data).
+    #~ if scene_data.settings.apply_unit_scale:
+        #~ # Unit scaling is applied to objects' scale, so our unit is effectively FBX one (centimeter).
+        #~ scale_factor_org = 1.0
+        #~ scale_factor = 1.0 / units_blender_to_fbx_factor(scene)
+    #~ else:
+        #~ scale_factor_org = units_blender_to_fbx_factor(scene)
+        #~ scale_factor = scale_factor_org
+    scale_factor = scale_factor_org = scene_data.settings.unit_scale
     elem_props_set(props, "p_integer", b"UpAxis", up_axis[0])
     elem_props_set(props, "p_integer", b"UpAxisSign", up_axis[1])
     elem_props_set(props, "p_integer", b"FrontAxis", front_axis[0])
@@ -2859,11 +2869,14 @@ def fbx_takes_elements(root, scene_data):
 def save_single(operator, scene, filepath="",
                 global_matrix=Matrix(),
                 apply_unit_scale=False,
+                global_scale=1.0,
+                apply_scale_options='FBX_SCALE_NONE',
                 axis_up="Z",
                 axis_forward="Y",
                 context_objects=None,
                 object_types=None,
                 use_mesh_modifiers=True,
+                use_mesh_modifiers_render=True,
                 mesh_smooth_type='FACE',
                 use_armature_deform_only=False,
                 bake_anim=True,
@@ -2896,8 +2909,19 @@ def save_single(operator, scene, filepath="",
     if 'OTHER' in object_types:
         object_types |= BLENDER_OTHER_OBJECT_TYPES
 
-    if apply_unit_scale:
-        global_matrix = global_matrix * Matrix.Scale(units_blender_to_fbx_factor(scene), 4)
+    # Default Blender unit is equivalent to meter, while FBX one is centimeter...
+    unit_scale = units_blender_to_fbx_factor(scene) if apply_unit_scale else 100.0
+    if apply_scale_options == 'FBX_SCALE_NONE':
+        global_matrix = Matrix.Scale(unit_scale * global_scale, 4) * global_matrix
+        unit_scale = 1.0
+    elif apply_scale_options == 'FBX_SCALE_UNITS':
+        global_matrix = Matrix.Scale(global_scale, 4) * global_matrix
+    elif apply_scale_options == 'FBX_SCALE_CUSTOM':
+        global_matrix = Matrix.Scale(unit_scale, 4) * global_matrix
+        unit_scale = global_scale
+    else: # if apply_scale_options == 'FBX_SCALE_ALL':
+        unit_scale = global_scale * unit_scale
+
     global_scale = global_matrix.median_scale
     global_matrix_inv = global_matrix.inverted()
     # For transforming mesh normals.
@@ -2932,9 +2956,9 @@ def save_single(operator, scene, filepath="",
     )
 
     settings = FBXExportSettings(
-        operator.report, (axis_up, axis_forward), global_matrix, global_scale, apply_unit_scale,
+        operator.report, (axis_up, axis_forward), global_matrix, global_scale, apply_unit_scale, unit_scale,
         bake_space_transform, global_matrix_inv, global_matrix_inv_transposed,
-        context_objects, object_types, use_mesh_modifiers,
+        context_objects, object_types, use_mesh_modifiers, use_mesh_modifiers_render,
         mesh_smooth_type, use_mesh_edges, use_tspace,
         armature_nodetype, use_armature_deform_only,
         add_leaf_bones, bone_correction_matrix, bone_correction_matrix_inv,
@@ -3005,6 +3029,7 @@ def defaults_unity3d():
 
         "object_types": {'ARMATURE', 'EMPTY', 'MESH', 'OTHER'},
         "use_mesh_modifiers": True,
+        "use_mesh_modifiers_render": True,
         "use_mesh_edges": False,
         "mesh_smooth_type": 'FACE',
         "use_tspace": False,  # XXX Why? Unity is expected to support tspace import...
@@ -3105,7 +3130,7 @@ def save(operator, context,
                 # Find the 'most used' source scene, and use its unit settings. This is somewhat weak, but should work
                 # fine in most cases, and avoids stupid issues like T41931.
                 best_src_scene = None
-                best_src_scene_users = 0
+                best_src_scene_users = -1
                 for sce, nbr_users in src_scenes.items():
                     if (nbr_users) > best_src_scene_users:
                         best_src_scene_users = nbr_users

@@ -21,8 +21,8 @@
 bl_info = {
     "name": "FBX format",
     "author": "Campbell Barton, Bastien Montagne, Jens Restemeier",
-    "version": (3, 7, 7),
-    "blender": (2, 77, 0),
+    "version": (3, 7, 17),
+    "blender": (2, 79, 0),
     "location": "File > Import-Export",
     "description": "FBX IO meshes, UV's, vertex colors, materials, textures, cameras, lamps and actions",
     "warning": "",
@@ -281,9 +281,24 @@ class ExportFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
     # 7.4 only
     apply_unit_scale = BoolProperty(
             name="Apply Unit",
-            description="Scale all data according to current Blender size, to match default FBX unit "
-                        "(centimeter, some importers do not handle UnitScaleFactor properly)",
+            description="Take into account current Blender units settings (if unset, raw Blender Units values are used as-is)",
             default=True,
+            )
+    # 7.4 only
+    apply_scale_options = EnumProperty(
+            items=(('FBX_SCALE_NONE', "All Local",
+                    "Apply custom scaling and units scaling to each object transformation, FBX scale remains at 1.0"),
+                   ('FBX_SCALE_UNITS', "FBX Units Scale",
+                    "Apply custom scaling to each object transformation, and units scaling to FBX scale"),
+                   ('FBX_SCALE_CUSTOM', "FBX Custom Scale",
+                    "Apply custom scaling to FBX scale, and units scaling to each object transformation"),
+                   ('FBX_SCALE_ALL', "FBX All",
+                    "Apply custom scaling and units scaling to FBX scale"),
+                   ),
+            name="Apply Scalings",
+            description="How to apply custom and units scalings in generated FBX file "
+                        "(Blender uses FBX scale to detect units on import, "
+                        "but many other applications do not handle the same way)",
             )
     # 7.4 only
     bake_space_transform = BoolProperty(
@@ -312,6 +327,11 @@ class ExportFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             name="Apply Modifiers",
             description="Apply modifiers to mesh objects (except Armature ones) - "
                         "WARNING: prevents exporting shape keys",
+            default=True,
+            )
+    use_mesh_modifiers_render = BoolProperty(
+            name="Use Modifiers Render Setting",
+            description="Use render settings when applying modifiers to mesh objects",
             default=True,
             )
     mesh_smooth_type = EnumProperty(
@@ -494,10 +514,14 @@ class ExportFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             layout.prop(self, "ui_tab", expand=True)
             if self.ui_tab == 'MAIN':
                 layout.prop(self, "use_selection")
-                row = layout.row(align=True)
+
+                col = layout.column(align=True)
+                row = col.row(align=True)
                 row.prop(self, "global_scale")
                 sub = row.row(align=True)
                 sub.prop(self, "apply_unit_scale", text="", icon='NDOF_TRANS')
+                col.prop(self, "apply_scale_options")
+
                 layout.prop(self, "axis_forward")
                 layout.prop(self, "axis_up")
 
@@ -518,6 +542,9 @@ class ExportFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
                 sub.prop(self, "use_batch_own_dir", text="", icon='NEWFOLDER')
             elif self.ui_tab == 'GEOMETRY':
                 layout.prop(self, "use_mesh_modifiers")
+                sub = layout.row()
+                sub.enabled = self.use_mesh_modifiers
+                sub.prop(self, "use_mesh_modifiers_render")
                 layout.prop(self, "mesh_smooth_type")
                 layout.prop(self, "use_mesh_edges")
                 sub = layout.row()
@@ -577,13 +604,11 @@ class ExportFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
         if not self.filepath:
             raise Exception("filepath not set")
 
-        global_matrix = (Matrix.Scale(self.global_scale, 4) *
-                         axis_conversion(to_forward=self.axis_forward,
+        global_matrix = (axis_conversion(to_forward=self.axis_forward,
                                          to_up=self.axis_up,
                                          ).to_4x4())
 
-        keywords = self.as_keywords(ignore=("global_scale",
-                                            "check_existing",
+        keywords = self.as_keywords(ignore=("check_existing",
                                             "filter_glob",
                                             "ui_tab",
                                             ))
@@ -606,18 +631,27 @@ def menu_func_export(self, context):
     self.layout.operator(ExportFBX.bl_idname, text="FBX (.fbx)")
 
 
+classes = (
+    ImportFBX,
+    ExportFBX,
+)
+
+
 def register():
-    bpy.utils.register_module(__name__)
+    for cls in classes:
+        bpy.utils.register_class(cls)
 
     bpy.types.INFO_MT_file_import.append(menu_func_import)
     bpy.types.INFO_MT_file_export.append(menu_func_export)
 
 
 def unregister():
-    bpy.utils.unregister_module(__name__)
-
     bpy.types.INFO_MT_file_import.remove(menu_func_import)
     bpy.types.INFO_MT_file_export.remove(menu_func_export)
+
+    for cls in classes:
+        bpy.utils.unregister_class(cls)
+
 
 if __name__ == "__main__":
     register()

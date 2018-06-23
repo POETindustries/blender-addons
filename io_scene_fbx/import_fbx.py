@@ -82,7 +82,7 @@ def elem_find_first_string(elem, id_search):
     if fbx_item is not None and fbx_item.props:  # Do not error on complete empty properties (see T45291).
         assert(len(fbx_item.props) == 1)
         assert(fbx_item.props_type[0] == data_types.STRING)
-        return fbx_item.props[0].decode('utf-8')
+        return fbx_item.props[0].decode('utf-8', 'replace')
     return None
 
 
@@ -124,14 +124,14 @@ def elem_name_ensure_class(elem, clss=...):
     elem_name, elem_class = elem_split_name_class(elem)
     if clss is not ...:
         assert(elem_class == clss)
-    return elem_name.decode('utf-8')
+    return elem_name.decode('utf-8', 'replace')
 
 
 def elem_name_ensure_classes(elem, clss=...):
     elem_name, elem_class = elem_split_name_class(elem)
     if clss is not ...:
         assert(elem_class in clss)
-    return elem_name.decode('utf-8')
+    return elem_name.decode('utf-8', 'replace')
 
 
 def elem_split_name_class_nodeattr(elem):
@@ -290,7 +290,7 @@ from collections import namedtuple
 
 
 FBXTransformData = namedtuple("FBXTransformData", (
-    "loc", "geom_loc", 
+    "loc", "geom_loc",
     "rot", "rot_ofs", "rot_piv", "pre_rot", "pst_rot", "rot_ord", "rot_alt_mat", "geom_rot",
     "sca", "sca_ofs", "sca_piv", "geom_sca",
 ))
@@ -308,13 +308,13 @@ def blen_read_custom_properties(fbx_obj, blen_obj, settings):
                     # Special case for 3DS Max user properties:
                     assert(fbx_prop.props[1] == b'KString')
                     assert(fbx_prop.props_type[4] == data_types.STRING)
-                    items = fbx_prop.props[4].decode('utf-8')
+                    items = fbx_prop.props[4].decode('utf-8', 'replace')
                     for item in items.split('\r\n'):
                         if item:
                             prop_name, prop_value = item.split('=', 1)
                             blen_obj[prop_name.strip()] = prop_value.strip()
                 else:
-                    prop_name = fbx_prop.props[0].decode('utf-8')
+                    prop_name = fbx_prop.props[0].decode('utf-8', 'replace')
                     prop_type = fbx_prop.props[1]
                     if prop_type in {b'Vector', b'Vector3D', b'Color', b'ColorRGB'}:
                         assert(fbx_prop.props_type[4:7] == bytes((data_types.FLOAT64,)) * 3)
@@ -330,7 +330,7 @@ def blen_read_custom_properties(fbx_obj, blen_obj, settings):
                         blen_obj[prop_name] = fbx_prop.props[4]
                     elif prop_type == b'KString':
                         assert(fbx_prop.props_type[4] == data_types.STRING)
-                        blen_obj[prop_name] = fbx_prop.props[4].decode('utf-8')
+                        blen_obj[prop_name] = fbx_prop.props[4].decode('utf-8', 'replace')
                     elif prop_type in {b'Number', b'double', b'Double'}:
                         assert(fbx_prop.props_type[4] == data_types.FLOAT64)
                         blen_obj[prop_name] = fbx_prop.props[4]
@@ -343,14 +343,14 @@ def blen_read_custom_properties(fbx_obj, blen_obj, settings):
                     elif prop_type in {b'Enum', b'enum'}:
                         assert(fbx_prop.props_type[4:6] == bytes((data_types.INT32, data_types.STRING)))
                         val = fbx_prop.props[4]
-                        if settings.use_custom_props_enum_as_string:
-                            enum_items = fbx_prop.props[5].decode('utf-8').split('~')
+                        if settings.use_custom_props_enum_as_string and fbx_prop.props[5]:
+                            enum_items = fbx_prop.props[5].decode('utf-8', 'replace').split('~')
                             assert(val >= 0 and val < len(enum_items))
                             blen_obj[prop_name] = enum_items[val]
                         else:
                             blen_obj[prop_name] = val
                     else:
-                        print ("WARNING: User property type '%s' is not supported" % prop_type.decode('utf-8'))
+                        print ("WARNING: User property type '%s' is not supported" % prop_type.decode('utf-8', 'replace'))
 
 
 def blen_read_object_transform_do(transform_data):
@@ -783,12 +783,14 @@ def blen_read_geom_array_gen_direct_looptovert(mesh, fbx_data, stride):
 
 
 # generic error printers.
-def blen_read_geom_array_error_mapping(descr, fbx_layer_mapping):
-    print("warning layer %r mapping type unsupported: %r" % (descr, fbx_layer_mapping))
+def blen_read_geom_array_error_mapping(descr, fbx_layer_mapping, quiet=False):
+    if not quiet:
+        print("warning layer %r mapping type unsupported: %r" % (descr, fbx_layer_mapping))
 
 
-def blen_read_geom_array_error_ref(descr, fbx_layer_ref):
-    print("warning layer %r ref type unsupported: %r" % (descr, fbx_layer_ref))
+def blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet=False):
+    if not quiet:
+        print("warning layer %r ref type unsupported: %r" % (descr, fbx_layer_ref))
 
 
 def blen_read_geom_array_mapped_vert(
@@ -796,7 +798,7 @@ def blen_read_geom_array_mapped_vert(
         fbx_layer_data, fbx_layer_index,
         fbx_layer_mapping, fbx_layer_ref,
         stride, item_size, descr,
-        xform=None,
+        xform=None, quiet=False,
         ):
     if fbx_layer_mapping == b'ByVertice':
         if fbx_layer_ref == b'Direct':
@@ -804,16 +806,16 @@ def blen_read_geom_array_mapped_vert(
             blen_read_geom_array_setattr(blen_read_geom_array_gen_direct(fbx_layer_data, stride),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     elif fbx_layer_mapping == b'AllSame':
         if fbx_layer_ref == b'IndexToDirect':
             assert(fbx_layer_index is None)
             blen_read_geom_array_setattr(blen_read_geom_array_gen_allsame(len(blen_data)),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     else:
-        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping)
+        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping, quiet)
 
     return False
 
@@ -823,23 +825,23 @@ def blen_read_geom_array_mapped_edge(
         fbx_layer_data, fbx_layer_index,
         fbx_layer_mapping, fbx_layer_ref,
         stride, item_size, descr,
-        xform=None,
+        xform=None, quiet=False,
         ):
     if fbx_layer_mapping == b'ByEdge':
         if fbx_layer_ref == b'Direct':
             blen_read_geom_array_setattr(blen_read_geom_array_gen_direct(fbx_layer_data, stride),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     elif fbx_layer_mapping == b'AllSame':
         if fbx_layer_ref == b'IndexToDirect':
             assert(fbx_layer_index is None)
             blen_read_geom_array_setattr(blen_read_geom_array_gen_allsame(len(blen_data)),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     else:
-        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping)
+        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping, quiet)
 
     return False
 
@@ -849,7 +851,7 @@ def blen_read_geom_array_mapped_polygon(
         fbx_layer_data, fbx_layer_index,
         fbx_layer_mapping, fbx_layer_ref,
         stride, item_size, descr,
-        xform=None,
+        xform=None, quiet=False,
         ):
     if fbx_layer_mapping == b'ByPolygon':
         if fbx_layer_ref == b'IndexToDirect':
@@ -867,16 +869,16 @@ def blen_read_geom_array_mapped_polygon(
             blen_read_geom_array_setattr(blen_read_geom_array_gen_direct(fbx_layer_data, stride),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     elif fbx_layer_mapping == b'AllSame':
         if fbx_layer_ref == b'IndexToDirect':
             assert(fbx_layer_index is None)
             blen_read_geom_array_setattr(blen_read_geom_array_gen_allsame(len(blen_data)),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     else:
-        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping)
+        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping, quiet)
 
     return False
 
@@ -886,7 +888,7 @@ def blen_read_geom_array_mapped_polyloop(
         fbx_layer_data, fbx_layer_index,
         fbx_layer_mapping, fbx_layer_ref,
         stride, item_size, descr,
-        xform=None,
+        xform=None, quiet=False,
         ):
     if fbx_layer_mapping == b'ByPolygonVertex':
         if fbx_layer_ref == b'IndexToDirect':
@@ -904,23 +906,23 @@ def blen_read_geom_array_mapped_polyloop(
             blen_read_geom_array_setattr(blen_read_geom_array_gen_direct(fbx_layer_data, stride),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     elif fbx_layer_mapping == b'ByVertice':
         if fbx_layer_ref == b'Direct':
             assert(fbx_layer_index is None)
             blen_read_geom_array_setattr(blen_read_geom_array_gen_direct_looptovert(mesh, fbx_layer_data, stride),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     elif fbx_layer_mapping == b'AllSame':
         if fbx_layer_ref == b'IndexToDirect':
             assert(fbx_layer_index is None)
             blen_read_geom_array_setattr(blen_read_geom_array_gen_allsame(len(blen_data)),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
-        blen_read_geom_array_error_ref(descr, fbx_layer_ref)
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
     else:
-        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping)
+        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping, quiet)
 
     return False
 
@@ -1074,22 +1076,25 @@ def blen_read_geom_layer_normal(fbx_obj, mesh, xform=None):
     fbx_layer_index = elem_prop_first(elem_find_first(fbx_layer, b'NormalsIndex'))
 
     # try loops, then vertices.
-    tries = ((mesh.loops, False, blen_read_geom_array_mapped_polyloop),
-             (mesh.polygons, True, blen_read_geom_array_mapped_polygon),
-             (mesh.vertices, True, blen_read_geom_array_mapped_vert))
-    for blen_data, is_fake, func in tries:
+    tries = ((mesh.loops, "Loops", False, blen_read_geom_array_mapped_polyloop),
+             (mesh.polygons, "Polygons", True, blen_read_geom_array_mapped_polygon),
+             (mesh.vertices, "Vertices", True, blen_read_geom_array_mapped_vert))
+    for blen_data, blen_data_type, is_fake, func in tries:
         bdata = [None] * len(blen_data) if is_fake else blen_data
         if func(mesh, bdata, "normal",
-                fbx_layer_data, fbx_layer_index, fbx_layer_mapping, fbx_layer_ref, 3, 3, layer_id, xform):
-            if blen_data is mesh.polygons:
+                fbx_layer_data, fbx_layer_index, fbx_layer_mapping, fbx_layer_ref, 3, 3, layer_id, xform, True):
+            if blen_data_type is "Polygons":
                 for pidx, p in enumerate(mesh.polygons):
                     for lidx in range(p.loop_start, p.loop_start + p.loop_total):
                         mesh.loops[lidx].normal[:] = bdata[pidx]
-            elif blen_data is mesh.vertices:
+            elif blen_data_type is "Vertices":
                 # We have to copy vnors to lnors! Far from elegant, but simple.
                 for l in mesh.loops:
                     l.normal[:] = bdata[l.vertex_index]
             return True
+
+    blen_read_geom_array_error_mapping("normal", fbx_layer_mapping)
+    blen_read_geom_array_error_ref("normal", fbx_layer_ref)
     return False
 
 
@@ -1281,7 +1286,7 @@ def blen_read_material(fbx_tmpl, fbx_obj, settings):
 
     fbx_props = (elem_find_first(fbx_obj, b'Properties70'),
                  elem_find_first(fbx_tmpl, b'Properties70', fbx_elem_nil))
-    assert(fbx_props[0] is not None)
+    #~ assert(fbx_props[0] is not None)  # Some Material may be missing that one, it seems... see T50566.
 
     ma_diff = elem_props_get_color_rgb(fbx_props, b'DiffuseColor', const_color_white)
     ma_spec = elem_props_get_color_rgb(fbx_props, b'SpecularColor', const_color_white)
@@ -1292,7 +1297,7 @@ def blen_read_material(fbx_tmpl, fbx_obj, settings):
     ma_refl_color = elem_props_get_color_rgb(fbx_props, b'ReflectionColor', const_color_white)
 
     if settings.use_cycles:
-        from . import cycles_shader_compat
+        from modules import cycles_shader_compat
         # viewport color
         ma.diffuse_color = ma_diff
 
@@ -1923,7 +1928,7 @@ class FbxImportHelperNode:
         obj.matrix_basis = self.get_matrix()
 
         if settings.use_custom_props:
-            blen_read_custom_properties(fbx_props[0], obj, settings)
+            blen_read_custom_properties(self.fbx_elem, obj, settings)
 
         return obj
 
@@ -2072,7 +2077,7 @@ class FbxImportHelperNode:
                 assert(fbx_props[0] is not None)
 
                 if settings.use_custom_props:
-                    blen_read_custom_properties(fbx_props[0], arm, settings)
+                    blen_read_custom_properties(self.fbx_elem, arm, settings)
 
             # instance in scene
             obj_base = scene.objects.link(arm)
@@ -2797,7 +2802,7 @@ def load(operator, context, filepath="",
                     if lnk_prop in {b'Lcl Translation', b'Lcl Rotation', b'Lcl Scaling'}:
                         # n_uuid can (????) be linked to root '0' node, instead of a mere object node... See T41712.
                         ob = fbx_helper_nodes.get(n_uuid, None)
-                        if ob is None:
+                        if ob is None or ob.is_root:
                             continue
                         items.append((ob, lnk_prop))
                     elif lnk_prop == b'DeformPercent':  # Shape keys.

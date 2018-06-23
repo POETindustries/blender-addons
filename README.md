@@ -5,7 +5,6 @@ as modifications to existing ones. It should be installed on top of
 the existing add-ons directory.
 
 ## Additional Add-ons
-- Magic UV
 - Root Motionist
 
 ## Modified Add-ons
